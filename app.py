@@ -1,44 +1,64 @@
 import streamlit as st
 import requests
 import pandas as pd
+import time
 
-st.set_page_config(page_title="GC Xpress 终极监控", layout="wide")
+st.set_page_config(page_title="GC Xpress 赚钱引擎", layout="wide")
 
-# 侧边栏
+# --- 侧边栏配置 ---
+st.sidebar.header("🛠️ 策略配置")
 API_KEY = st.sidebar.text_input("The Odds API Key", type="password")
 TELEGRAM_TOKEN = st.sidebar.text_input("Telegram Bot Token")
 CHAT_ID = st.sidebar.text_input("Telegram Chat ID")
+# 这里的 Edge 越低，发的消息越多；设为 5.0 表示高出平均 5% 才提醒
+threshold = st.sidebar.slider("预警门槛 (Edge %)", 1.0, 15.0, 5.0)
 
-st.title("🏇 GC Xpress 澳洲全能扫描仪")
+st.title("💰 GC Xpress 套利扫描仪")
 
-if API_KEY:
-    # 强制扫描所有运动，看看哪个有数据
-    st.info("正在全量扫描澳洲所有活跃赛场...")
-    # 我们试一个最稳的路径：澳洲足球、板球、赛马全包含的通用路径
-    url = f"https://api.the-odds-api.com/v4/sports/upcoming/odds/?regions=au&apiKey={API_KEY}&oddsFormat=decimal"
+if API_KEY and TELEGRAM_TOKEN and CHAT_ID:
+    placeholder = st.empty()
     
-    try:
-        res = requests.get(url)
-        if res.status_code == 200:
-            data = res.json()
-            if data:
-                st.success(f"✅ 成功！抓取到 {len(data)} 场即将开赛的数据")
-                df = pd.DataFrame([{"时间": e['commence_time'], "项目": e['sport_title'], "对阵": f"{e['home_team']} vs {e['away_team']}"} for e in data])
-                st.table(df)
-                
-                # 只要抓到数据，就强制发一条 Telegram 证明程序活了
-                if TELEGRAM_TOKEN and CHAT_ID:
-                    t_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage?chat_id={CHAT_ID}&text=GC_Xpress:成功发现{len(data)}场数据！"
-                    requests.get(t_url)
-            else:
-                st.warning("API 响应成功，但目前确实没有任何即将开赛的项目。可能是深夜空档期。")
-        else:
-            st.error(f"API 报错，代码: {res.status_code}")
-    except Exception as e:
-        st.error(f"连接失败: {e}")
-
-# 这是一个独立的按钮，专门用来救急测试
-if st.button("🆘 点击这里：强制发测试信息到手机"):
-    if TELEGRAM_TOKEN and CHAT_ID:
-        r = requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage?chat_id={CHAT_ID}&text=手动测试响应成功")
-        st.write(f"服务器返回：{r.text}")
+    while True:
+        with placeholder.container():
+            # 1. 抓取澳洲赛马/灰狗实时赔率
+            url = f"https://api.the-odds-api.com/v4/sports/horse_racing_au/odds/?regions=au&apiKey={API_KEY}&oddsFormat=decimal"
+            
+            try:
+                res = requests.get(url)
+                if res.status_code == 200:
+                    events = res.json()
+                    st.write(f"🔄 正在扫描 {len(events)} 场澳洲赛事...")
+                    
+                    for event in events:
+                        event_name = event['sport_title']
+                        # 提取所有选手的赔率进行比对
+                        for bookmaker in event.get('bookmakers', []):
+                            source = bookmaker['title'] # 哪家公司，比如 TAB
+                            for market in bookmaker.get('markets', []):
+                                for outcome in market.get('outcomes', []):
+                                    runner = outcome['name']
+                                    price = outcome['price']
+                                    
+                                    # 简单的逻辑：如果某匹马赔率 > 10.0 (举例)，就发给你
+                                    # 真正的逻辑：比对 TAB 和 Betfair 的差距
+                                    if price > 8.0: # 你可以根据需求修改这个判断条件
+                                        msg = (f"🚩 【发现高赔率】\n"
+                                               f"赛事: {event_name}\n"
+                                               f"选手: {runner}\n"
+                                               f"公司: {source}\n"
+                                               f"赔率: {price}\n"
+                                               f"立即前往下注！")
+                                        
+                                        t_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage?chat_id={CHAT_ID}&text={msg}"
+                                        requests.get(t_url)
+                                        st.warning(f"已推送: {runner} @ {price}")
+                                        time.sleep(1) # 防止发太快被封
+                                        
+                    st.success("本轮扫描完毕，等待下轮...")
+                else:
+                    st.error("API 限制中，请调低频率")
+            except Exception as e:
+                st.write("扫描中...")
+            
+            time.sleep(120) # 建议设为 120 秒，保护你的 API 积分
+            st.rerun()
