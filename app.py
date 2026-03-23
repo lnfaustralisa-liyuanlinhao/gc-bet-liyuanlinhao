@@ -1,47 +1,58 @@
 import streamlit as st
 import requests
 import pandas as pd
-import time
 
-st.set_page_config(page_title="GC Xpress Betting Agent", layout="wide")
+st.set_page_config(page_title="GC Xpress - 赔率监控", layout="wide")
 
-# 侧边栏配置
-st.sidebar.header("🛠️ 核心配置")
+# --- 侧边栏配置 ---
+st.sidebar.header("🛠️ 配置中心")
 API_KEY = st.sidebar.text_input("The Odds API Key", type="password")
 TELEGRAM_TOKEN = st.sidebar.text_input("Telegram Bot Token")
 CHAT_ID = st.sidebar.text_input("Telegram Chat ID")
+threshold = st.sidebar.slider("预警门槛 (Edge %)", 0.0, 15.0, 3.0)
 
-st.sidebar.markdown("---")
-threshold = st.sidebar.slider("预警门槛 (Edge %)", 0.0, 15.0, 5.0)
+st.title("🏇 GC Xpress 实时赔率套利监控")
 
-st.title("🏇 GC Xpress 赔率监控中心")
-
-if not API_KEY:
-    st.warning("请在左侧填入 API Key 开始运行")
-else:
-    st.info("系统正在实时扫描澳洲赛场 (Horse Racing & Greyhounds)...")
-    # 这里是简化版逻辑，确保页面能先跑起来
-    st.write("等待数据接入...")
+if API_KEY and TELEGRAM_TOKEN and CHAT_ID:
+    # 扫描澳洲赛马和灰狗 (Regions=au)
+    url = f"https://api.the-odds-api.com/v4/sports/horse_racing_au/odds/?regions=au&apiKey={API_KEY}&oddsFormat=decimal"
     
-    if st.button("手动测试 Telegram 通知"):
-        if TELEGRAM_TOKEN and CHAT_ID:
-            test_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage?chat_id={CHAT_ID}&text=GC_Xpress_测试成功!_代理已上线"
-            requests.get(test_url)
-            st.success("测试指令已发送，请检查手机 Telegram！")
-import streamlit as st
-import requests
+    try:
+        res = requests.get(url)
+        if res.status_code == 200:
+            events = res.json()
+            st.success(f"✅ 正在实时扫描 {len(events)} 场澳洲赛事...")
+            
+            results = []
+            for event in events:
+                # 获取不同博彩公司的赔率
+                for bookmaker in event.get('bookmakers', []):
+                    # 我们重点对比 TAB, Sportsbet 和 Betfair
+                    title = bookmaker['title']
+                    markets = bookmaker.get('markets', [])
+                    if markets:
+                        for runner in markets[0].get('outcomes', []):
+                            results.append({
+                                "比赛名称": event['sport_title'],
+                                "参赛选手": runner['name'],
+                                "博彩公司": title,
+                                "当前赔率": runner['price']
+                            })
+            
+            if results:
+                df = pd.DataFrame(results)
+                # 只显示赔率最高的几项，方便你对比
+                st.dataframe(df.sort_values(by="当前赔率", ascending=False), use_container_width=True)
+            else:
+                st.info("目前场次暂无赔率数据，请稍等刷新。")
+        else:
+            st.error(f"API 获取失败，请检查 Key 是否过期。")
+    except Exception as e:
+        st.error(f"运行出错: {e}")
+else:
+    st.warning("请在左侧填入所有 Key 以激活自动扫描。")
 
-# 这一段专门用来诊断为什么“没反应”
-st.title("🛡️ 系统诊断模式")
-
-api_key = st.text_input("填入你的 API Key 并回车", type="password")
-
-if api_key:
-    test_url = f"https://api.the-odds-api.com/v4/sports/?apiKey={api_key}"
-    res = requests.get(test_url)
-    if res.status_code == 200:
-        st.success("✅ API 连接完全正常！正在加载赛事...")
-        st.json(res.json()[:3]) # 显示前三条赛事证明通了
-    else:
-        st.error(f"❌ API 报错了！错误代码: {res.status_code}")
-        st.write(res.text)
+if st.sidebar.button("测试 Telegram 通知"):
+    test_msg = "GC_Xpress_测试: 你的分析仪已经正式上线了！"
+    requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage?chat_id={CHAT_ID}&text={test_msg}")
+    st.sidebar.success("已发送测试！请检查手机。")
