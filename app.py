@@ -28,3 +28,20 @@ else:
             test_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage?chat_id={CHAT_ID}&text=GC_Xpress_测试成功!_代理已上线"
             requests.get(test_url)
             st.success("测试指令已发送，请检查手机 Telegram！")
+import streamlit as st
+import requests
+
+# 这一段专门用来诊断为什么“没反应”
+st.title("🛡️ 系统诊断模式")
+
+api_key = st.text_input("填入你的 API Key 并回车", type="password")
+
+if api_key:
+    test_url = f"https://api.the-odds-api.com/v4/sports/?apiKey={api_key}"
+    res = requests.get(test_url)
+    if res.status_code == 200:
+        st.success("✅ API 连接完全正常！正在加载赛事...")
+        st.json(res.json()[:3]) # 显示前三条赛事证明通了
+    else:
+        st.error(f"❌ API 报错了！错误代码: {res.status_code}")
+        st.write(res.text)
