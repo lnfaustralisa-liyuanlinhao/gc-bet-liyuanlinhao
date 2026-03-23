@@ -2,51 +2,43 @@ import streamlit as st
 import requests
 import pandas as pd
 
-st.set_page_config(page_title="GC Xpress 全能监控", layout="wide")
+st.set_page_config(page_title="GC Xpress 终极监控", layout="wide")
 
-st.sidebar.header("🛠️ 配置中心")
+# 侧边栏
 API_KEY = st.sidebar.text_input("The Odds API Key", type="password")
 TELEGRAM_TOKEN = st.sidebar.text_input("Telegram Bot Token")
 CHAT_ID = st.sidebar.text_input("Telegram Chat ID")
 
-st.title("🏇 GC Xpress 澳洲全赛场监控")
+st.title("🏇 GC Xpress 澳洲全能扫描仪")
 
 if API_KEY:
+    # 强制扫描所有运动，看看哪个有数据
+    st.info("正在全量扫描澳洲所有活跃赛场...")
+    # 我们试一个最稳的路径：澳洲足球、板球、赛马全包含的通用路径
+    url = f"https://api.the-odds-api.com/v4/sports/upcoming/odds/?regions=au&apiKey={API_KEY}&oddsFormat=decimal"
+    
     try:
-        # 第一步：动态获取当前所有可用的澳洲运动分类
-        all_sports_url = f"https://api.the-odds-api.com/v4/sports/?apiKey={API_KEY}"
-        all_sports = requests.get(all_sports_url).json()
-        
-        # 筛选出包含 'au' 的赛马或灰狗分类
-        au_sports = [s['key'] for s in all_sports if 'au' in s['key'] and ('racing' in s['key'] or 'greyhounds' in s['key'])]
-        
-        if not au_sports:
-            st.warning("⚠️ 当前 API 未返回任何活跃的澳洲赛马或灰狗场次，可能是空档期。")
-        else:
-            # 第二步：只抓取第一个“活着的”分类数据
-            target_sport = au_sports[0]
-            st.success(f"✅ 发现活跃赛场: {target_sport}")
-            
-            odds_url = f"https://api.the-odds-api.com/v4/sports/{target_sport}/odds/?regions=au&apiKey={API_KEY}&oddsFormat=decimal"
-            odds_res = requests.get(odds_url).json()
-            
-            if odds_res:
-                df_list = []
-                for event in odds_res:
-                    df_list.append({
-                        "项目": target_sport,
-                        "比赛": event['sport_title'],
-                        "选手": event['home_team'],
-                        "时间": event['commence_time']
-                    })
-                st.table(pd.DataFrame(df_list))
-            else:
-                st.info(f"分类 {target_sport} 存在，但暂无实时赔率。")
+        res = requests.get(url)
+        if res.status_code == 200:
+            data = res.json()
+            if data:
+                st.success(f"✅ 成功！抓取到 {len(data)} 场即将开赛的数据")
+                df = pd.DataFrame([{"时间": e['commence_time'], "项目": e['sport_title'], "对阵": f"{e['home_team']} vs {e['away_team']}"} for e in data])
+                st.table(df)
                 
+                # 只要抓到数据，就强制发一条 Telegram 证明程序活了
+                if TELEGRAM_TOKEN and CHAT_ID:
+                    t_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage?chat_id={CHAT_ID}&text=GC_Xpress:成功发现{len(data)}场数据！"
+                    requests.get(t_url)
+            else:
+                st.warning("API 响应成功，但目前确实没有任何即将开赛的项目。可能是深夜空档期。")
+        else:
+            st.error(f"API 报错，代码: {res.status_code}")
     except Exception as e:
-        st.error(f"发生错误: {e}")
-else:
-    st.info("请在左侧填入 API Key。")
+        st.error(f"连接失败: {e}")
 
-if st.sidebar.button("测试 Telegram"):
-    requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage?chat_id={CHAT_ID}&text=GC_Xpress_测试成功")
+# 这是一个独立的按钮，专门用来救急测试
+if st.button("🆘 点击这里：强制发测试信息到手机"):
+    if TELEGRAM_TOKEN and CHAT_ID:
+        r = requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage?chat_id={CHAT_ID}&text=手动测试响应成功")
+        st.write(f"服务器返回：{r.text}")
