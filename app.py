@@ -4,82 +4,82 @@ import pandas as pd
 import time
 from datetime import datetime
 
-st.set_page_config(page_title="GC Xpress 精准监控版", layout="wide")
+st.set_page_config(page_title="GC Xpress 极简指令版", layout="centered")
 
-# --- 侧边栏配置 ---
+# --- 侧边栏：只需填一次 ---
 with st.sidebar:
-    st.header("⚙️ 澳洲/英国 精准配置")
-    api_key = st.text_input("1. The Odds API Key", type="password")
-    t_token = st.text_input("2. Telegram Bot Token")
+    st.header("🔑 系统钥匙")
+    api_key = st.text_input("1. API Key", type="password")
+    t_token = st.text_input("2. Telegram Token")
     t_id = st.text_input("3. Telegram Chat ID")
     st.markdown("---")
-    # 按照你的要求：1.5 起步
-    threshold = st.slider("预警赔率下限", 1.0, 10.0, 1.5)
-    # 按照你的要求：5 分钟 (300 秒)
-    refresh_rate = st.slider("扫描频率 (秒)", 60, 600, 300)
-    st.info("📌 监控范围：\n- 赛马: 澳洲 + 英国\n- 灰狗: 澳洲专用")
+    st.info("💡 当前设定：\n- 监控：AU/UK 赛马 & AU 灰狗\n- 频率：5分钟/次\n- 策略：每轮仅推送概率最大的一场")
 
-st.title("🏇 GC Xpress 精准套利扫描 (AU/UK)")
+st.title("🎯 GC Xpress 极简指令引擎")
 
 if api_key and t_token and t_id:
-    st.success(f"🚀 引擎已启动：盯准澳洲/英国赛场，每 {refresh_rate} 秒扫描一次...")
-    placeholder = st.empty()
+    status_box = st.empty()
+    result_display = st.empty()
     
     while True:
-        with placeholder.container():
-            # 【关键修改】：regions=au,uk 锁定你需要的区域
-            url = f"https://api.the-odds-api.com/v4/sports/upcoming/odds/?regions=au,uk&apiKey={api_key}&oddsFormat=decimal"
-            
-            try:
-                res = requests.get(url)
-                if res.status_code == 200:
-                    data = res.json()
-                    st.write(f"🔍 扫描时间: {datetime.now().strftime('%H:%M:%S')} | 正在过滤...")
-                    
-                    found_count = 0
-                    for event in data:
-                        sport_key = event.get('sport_key', '').lower()
-                        sport_title = event.get('sport_title', '').lower()
+        url = f"https://api.the-odds-api.com/v4/sports/upcoming/odds/?regions=au,uk&apiKey={api_key}&oddsFormat=decimal"
+        
+        try:
+            res = requests.get(url)
+            remaining = res.headers.get('x-requests-remaining', 'N/A')
+            status_box.write(f"✅ 正在扫描全球数据... (API 余额: {remaining})")
+
+            if res.status_code == 200:
+                events = res.json()
+                all_candidates = []
+
+                for event in events:
+                    sport_key = event.get('sport_key', '').lower()
+                    # 过滤项目：澳洲/英国赛马，澳洲灰狗
+                    if any(k in sport_key for k in ['horse_racing', 'harness_racing']) or ('greyhounds' in sport_key and 'au' in sport_key):
+                        venue = event.get('home_team', '未知赛场')
                         
-                        # 【核心过滤逻辑】：
-                        # 1. 如果是赛马 (horse_racing)，允许澳洲和英国
-                        # 2. 如果是灰狗 (greyhounds)，只允许澳洲 (通过 sport_key 或标题判断)
-                        is_racing = 'horse_racing' in sport_key or 'harness_racing' in sport_key
-                        is_au_greyhound = 'greyhounds' in sport_key and 'au' in sport_key
-                        
-                        if is_racing or is_au_greyhound:
-                            venue = event.get('home_team', '未知赛场') 
-                            
-                            for bookmaker in event.get('bookmakers', []):
-                                # 锁定主流平台
-                                if bookmaker['key'] in ['tab', 'sportsbet', 'betfair', 'williamhill_au', 'ladbrokes_au']:
-                                    for market in bookmaker.get('markets', []):
-                                        for outcome in market.get('outcomes', []):
-                                            name = outcome['name']
-                                            price = outcome['price']
-                                            
-                                            if price >= threshold:
-                                                found_count += 1
-                                                # Telegram 信息发送
-                                                t_msg = (f"🎯 【精准机会】\n"
-                                                         f"📍 地点: {venue}\n"
-                                                         f"🐎 名字: {name}\n"
-                                                         f"💰 赔率: {price}\n"
-                                                         f"🏢 公司: {bookmaker['title']}\n"
-                                                         f"----------------\n"
-                                                         f"📌 搜法: TAB -> Racing -> 搜 [{venue}]")
-                                                
-                                                requests.get(f"https://api.telegram.org/bot{t_token}/sendMessage?chat_id={t_id}&text={t_msg}")
-                    
-                    if found_count == 0:
-                        st.info("监控中：当前暂无符合条件的 AU/UK 比赛。")
-                else:
-                    st.error(f"API 限制或异常，请检查 Key。代码返回: {res.status_code}")
-            except Exception as e:
-                st.write(f"等待数据同步中...")
-            
-            # 循环冷却 300 秒
-            time.sleep(refresh_rate)
-            st.rerun()
+                        for bookie in event.get('bookmakers', []):
+                            if bookie['key'] in ['tab', 'sportsbet']: # 优先看你常用的公司
+                                for market in bookie.get('markets', []):
+                                    for outcome in market.get('outcomes', []):
+                                        # 核心逻辑：找出每一场里赔率最低（概率最大）的那个
+                                        all_candidates.append({
+                                            "venue": venue,
+                                            "name": outcome['name'],
+                                            "price": outcome['price'],
+                                            "bookie": bookie['title']
+                                        })
+
+                if all_candidates:
+                    # 从所有选手中，选出赔率最稳（最低）且在1.5以上的那一个
+                    # 按照赔率从小到大排序，取第一个
+                    filtered_candidates = [c for c in all_candidates if c['price'] >= 1.5]
+                    if filtered_candidates:
+                        best_bet = min(filtered_candidates, key=lambda x: x['price'])
+
+                        # 1. 网页显示
+                        result_display.success(f"### 📍 下一场推荐：{best_bet['venue']}\n"
+                                               f"**选手：** {best_bet['name']}  \n"
+                                               f"**赔率：** {best_bet['price']}  \n"
+                                               f"**平台：** {best_bet['bookie']}")
+
+                        # 2. 推送最简单的指令
+                        t_msg = (f"📢 【极简指令】\n"
+                                 f"📍 赛场: {best_bet['venue']}\n"
+                                 f"🐎 名字: {best_bet['name']}\n"
+                                 f"💰 赔率: {best_bet['price']}\n"
+                                 f"🏢 平台: {best_bet['bookie']}\n"
+                                 f"⏰ 动作: 赔率合适请立即查看")
+                        requests.get(f"https://api.telegram.org/bot{t_token}/sendMessage?chat_id={t_id}&text={t_msg}")
+                    else:
+                        result_display.info("当前暂无符合 1.5 以上稳健赔率的比赛。")
+            else:
+                st.error("连接失败，请检查 API Key 是否正确。")
+        except Exception as e:
+            st.error(f"引擎同步中... {e}")
+
+        time.sleep(300) # 强制5分钟刷新一次
+        st.rerun()
 else:
-    st.warning("👋 Mark，请在左侧填入配置信息并回车。")
+    st.warning("👋 Mark，请在左侧填入必要信息开启引擎。")
