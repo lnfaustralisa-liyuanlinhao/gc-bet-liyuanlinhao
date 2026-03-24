@@ -4,67 +4,85 @@ import pandas as pd
 import time
 from datetime import datetime
 
-st.set_page_config(page_title="GC Xpress 灰狗强力版", layout="wide")
+st.set_page_config(page_title="GC Xpress $200 盈利计划", layout="wide")
 
+# --- 侧边栏 ---
 with st.sidebar:
-    st.header("🐕 澳洲灰狗-强力监控")
+    st.header("🎯 盈利目标：$200/日")
     api_key = st.text_input("1. API Key", type="password")
     t_token = st.text_input("2. Telegram Token")
     t_id = st.text_input("3. Telegram Chat ID")
     st.markdown("---")
-    st.write("📌 当前逻辑：全类目强制筛选灰狗")
+    st.warning("💡 建议在下午 2点-9点 开启，其余时间关机省积分。")
 
-st.title("🎯 澳洲灰狗-全量扫描中")
+st.title("🐕 澳洲灰狗高胜率决策引擎")
 
 if api_key and t_token and t_id:
-    placeholder = st.empty()
+    info_box = st.empty()
+    table_box = st.empty()
     
-    # 强制获取所有运动，看看灰狗到底藏在哪
+    # 强制请求所有澳洲赔率，防止标签漏抓
     url = f"https://api.the-odds-api.com/v4/sports/upcoming/odds/?regions=au&apiKey={api_key}&oddsFormat=decimal"
     
     try:
         res = requests.get(url)
-        # 实时显示积分
         remaining = res.headers.get('x-requests-remaining', 'N/A')
-        st.info(f"📊 实时 API 剩余积分: {remaining}")
+        info_box.info(f"📡 引擎监控中... | API 剩余积分: {remaining} | 最后扫描: {datetime.now().strftime('%H:%M:%S')}")
 
         if res.status_code == 200:
-            data = res.json()
-            found_list = []
-            
-            for event in data:
-                # 模糊匹配：只要名字里有 greyhound 就抓
-                s_title = event.get('sport_title', '')
-                s_key = event.get('sport_key', '')
-                
-                if 'greyhound' in s_title.lower() or 'greyhound' in s_key.lower():
+            events = res.json()
+            recommendations = []
+
+            for event in events:
+                sport_title = event.get('sport_title', '').lower()
+                # 只要是澳洲的灰狗
+                if 'greyhound' in sport_title:
                     venue = event.get('home_team', '未知赛场')
-                    commence = event.get('commence_time', '')
-                    found_list.append({"赛场": venue, "时间": commence})
                     
-                    # 只要发现场次，立即推送最稳的赔率
                     for bookie in event.get('bookmakers', []):
-                        if bookie['key'] in ['tab', 'sportsbet']:
+                        if bookie['key'] == 'tab': # 锁定澳洲 TAB 数据
                             for market in bookie.get('markets', []):
                                 runners = market.get('outcomes', [])
-                                if runners:
-                                    # 自动生成 Win/Place/Quinella 指令
+                                if len(runners) >= 5: # 确保是有竞争力的完整场次
                                     sorted_r = sorted(runners, key=lambda x: x['price'])
-                                    d1 = sorted_r[0]
-                                    d2 = sorted_r[1] if len(sorted_r) > 1 else d1
+                                    fav = sorted_r[0] # 头号热门
+                                    sec = sorted_r[1] # 二号热门
                                     
-                                    t_msg = (f"🐕 【灰狗指令】\n📍 赛场: {venue}\n🥇 WIN: {d1['name']} (@{d1['price']})\n🔢 QUINELLA: {d1['name']} & {d2['name']}")
-                                    requests.get(f"https://api.telegram.org/bot{t_token}/sendMessage?chat_id={t_id}&text={t_msg}")
+                                    # --- 最高胜率分析逻辑 ---
+                                    # 策略：头号热门赔率在 1.5 - 2.8 之间，且领先第二名至少 0.5 以上
+                                    if 1.5 <= fav['price'] <= 2.8 and (sec['price'] - fav['price'] > 0.5):
+                                        recommendations.append({
+                                            "赛场": venue,
+                                            "最强狗": fav['name'],
+                                            "赔率": fav['price'],
+                                            "信心度": "🔥 高 (热门领先)"
+                                        })
+                                        
+                                        # 发送一键指令
+                                        t_msg = (f"💰 【$200 盈利机会】\n"
+                                                 f"📍 赛场: {venue}\n"
+                                                 f"🐕 目标: {fav['name']}\n"
+                                                 f"💵 赔率: {fav['price']}\n"
+                                                 f"📊 策略: 强力单选 (Win)\n"
+                                                 f"🔢 组合建议: Quinella ({fav['name']} & {sec['name']})\n"
+                                                 f"----------------\n"
+                                                 f"📌 动作: 立即打开 TAB 确认地点后下单")
+                                        requests.get(f"https://api.telegram.org/bot{t_token}/sendMessage?chat_id={t_id}&text={t_msg}")
 
-            if found_list:
-                st.table(pd.DataFrame(found_list))
+            if recommendations:
+                table_box.table(pd.DataFrame(recommendations))
             else:
-                st.warning("⚠️ 此时此刻 API 确实没发回灰狗数据。可能是当前没有临近 15 分钟开赛的场次，或者积分已耗尽。")
-        else:
-            st.error(f"API 报错: {res.status_code}。可能是积分用完了。")
-
+                table_box.warning("🕒 当前暂未发现‘高胜率’信号场次。系统只会在机会极佳时推送，请耐心等待。")
+        elif res.status_code == 401:
+            st.error("🔑 API Key 错误，请检查。")
+        elif res.status_code == 429:
+            st.error("🚨 积分已耗尽！请等到下个月或更换新 Key。")
+            
     except Exception as e:
-        st.write("连接中...")
-    
-    time.sleep(120) # 调回 120 秒，省着点花积分
+        st.write("系统唤醒中...")
+
+    # 3分钟扫描一次，平衡实时性与积分消耗
+    time.sleep(180)
     st.rerun()
+else:
+    st.warning("👋 Mark，请填入配置信息以启动盈利引擎。")
