@@ -4,96 +4,88 @@ import pandas as pd
 import time
 from datetime import datetime, timedelta
 
-st.set_page_config(page_title="GC Xpress 灰狗专业版", layout="wide")
+st.set_page_config(page_title="GC Xpress 灰狗实战版", layout="wide")
 
-# --- 侧边栏配置 ---
 with st.sidebar:
-    st.header("🐕 澳洲灰狗专用")
+    st.header("🐕 灰狗专用配置")
     api_key = st.text_input("1. API Key", type="password")
     t_token = st.text_input("2. Telegram Token")
     t_id = st.text_input("3. Telegram Chat ID")
     st.markdown("---")
-    st.info("📌 监控：仅限 AU Greyhounds\n🕒 触发：开赛前 2-5 分钟\n📊 分析：综合赔率、箱号及波动")
+    st.info("🕒 监控：仅限澳洲灰狗\n🚀 触发：开赛前 15 分钟")
 
-st.title("🎯 澳洲灰狗临场分析决策系统")
-
-def send_telegram(msg, token, chat_id):
-    url = f"https://api.telegram.org/bot{token}/sendMessage?chat_id={chat_id}&text={msg}"
-    requests.get(url)
+st.title("🎯 澳洲灰狗临场精准分析")
 
 if api_key and t_token and t_id:
     status_msg = st.empty()
+    table_placeholder = st.empty()
     
     while True:
-        # 获取澳洲所有即将开始的灰狗赛
+        # 获取数据
         url = f"https://api.the-odds-api.com/v4/sports/upcoming/odds/?regions=au&apiKey={api_key}&oddsFormat=decimal"
         
         try:
             res = requests.get(url)
             if res.status_code == 200:
                 events = res.json()
-                now = datetime.utcnow()
+                # 统一使用 UTC 时间进行计算，防止时差错误
+                now_utc = datetime.utcnow()
                 
-                status_msg.info(f"🛰️ 引擎运行中... 正在深度扫描澳洲灰狗场次")
-
+                upcoming_greyhounds = []
+                
                 for event in events:
-                    sport_key = event.get('sport_key', '').lower()
-                    # 严格锁定：澳洲灰狗
-                    if 'greyhounds_au' in sport_key:
+                    sport_title = event.get('sport_title', '').lower()
+                    # 只要包含 greyhound 就抓取
+                    if 'greyhound' in sport_title:
                         commence_time = datetime.strptime(event['commence_time'], "%Y-%m-%dT%H:%M:%SZ")
-                        time_diff = (commence_time - now).total_seconds() / 60
+                        # 计算剩余分钟数
+                        time_diff = (commence_time - now_utc).total_seconds() / 60
                         
-                        # 【时间触发】：只处理开赛前 2 到 7 分钟的场次
-                        if 2 <= time_diff <= 7:
+                        # 只要是未来 20 分钟内的比赛都显示在网页上供参考
+                        if -2 < time_diff < 20:
                             venue = event.get('home_team', '未知赛场')
+                            upcoming_greyhounds.append({"赛场": venue, "剩余分钟": round(time_diff, 1)})
                             
-                            # 获取选手（狗）数据
-                            runners = []
-                            for bookie in event.get('bookmakers', []):
-                                if bookie['key'] == 'tab': # 核心参考 TAB 数据
-                                    for market in bookie.get('markets', []):
-                                        for outcome in market.get('outcomes', []):
-                                            runners.append({
-                                                "name": outcome['name'],
-                                                "price": outcome['price']
-                                            })
-                            
-                            if len(runners) >= 3:
-                                # 按赔率排序（寻找热门）
-                                sorted_runners = sorted(runners, key=lambda x: x['price'])
+                            # 【触发推送】：开赛前 2 到 15 分钟
+                            if 2 <= time_diff <= 15:
+                                runners = []
+                                for bookie in event.get('bookmakers', []):
+                                    if bookie['key'] in ['tab', 'sportsbet']:
+                                        for market in bookie.get('markets', []):
+                                            for outcome in market.get('outcomes', []):
+                                                runners.append({"name": outcome['name'], "price": outcome['price']})
                                 
-                                # 【核心算法：模拟胜率分析】
-                                # 这里假设：赔率最低的 3 只狗是我们的核心候选
-                                dog1 = sorted_runners[0]['name']
-                                dog2 = sorted_runners[1]['name']
-                                dog3 = sorted_runners[2]['name']
+                                if len(runners) >= 3:
+                                    # 模拟胜率分析逻辑
+                                    sorted_r = sorted(runners, key=lambda x: x['price'])
+                                    d1, d2, d3 = sorted_r[0], sorted_r[1], sorted_r[2]
+                                    
+                                    t_msg = (f"🐕 【灰狗临场推介】\n"
+                                             f"📍 赛场: {venue}\n"
+                                             f"⏰ 还有 {round(time_diff)} 分钟开赛\n"
+                                             f"----------------\n"
+                                             f"🥇 WIN: {d1['name']} (@{d1['price']})\n"
+                                             f"🥈 PLACE: {d1['name']}, {d2['name']}\n"
+                                             f"🔢 QUINELLA: {d1['name']} & {d2['name']}\n"
+                                             f"🎲 TRIFECTA (Box): {d1['name']}, {d2['name']}, {d3['name']}\n"
+                                             f"----------------\n"
+                                             f"📌 提示: 请在 TAB 确认箱号后下单")
+                                    
+                                    requests.get(f"https://api.telegram.org/bot{t_token}/sendMessage?chat_id={t_id}&text={t_msg}")
+                                    st.toast(f"已推送: {venue}")
+                                    time.sleep(5) # 简单防重发
 
-                                # 发送深度指令
-                                report = (
-                                    f"🚨 【灰狗临场告警】\n"
-                                    f"📍 赛场: {venue}\n"
-                                    f"⏰ 开赛时间: {commence_time.strftime('%H:%M')} (GMT)\n"
-                                    f"----------------\n"
-                                    f"🏆 核心建议：\n"
-                                    f"🥇 WIN: {dog1}\n"
-                                    f"🥈 PLACE: {dog1}, {dog2}\n"
-                                    f"🔢 QUINELLA: {dog1} & {dog2}\n"
-                                    f"🎲 TRIFECTA: {dog1}, {dog2}, {dog3} (Boxed)\n"
-                                    f"----------------\n"
-                                    f"📊 后台分析：\n"
-                                    f"根据临场赔率及市场支持度，该场次热门狗信号稳定。")
-                                
-                                send_telegram(report, t_token, t_id)
-                                st.success(f"✅ 已发送分析报告: {venue}")
-                                # 避免同一场比赛重复发送
-                                time.sleep(10) 
-
+                # 在网页上实时显示排队中的场次
+                if upcoming_greyhounds:
+                    status_msg.success(f"📡 正在监控中... 发现 {len(upcoming_greyhounds)} 场即将开始的灰狗赛")
+                    table_placeholder.table(pd.DataFrame(upcoming_greyhounds))
+                else:
+                    status_msg.warning("🕒 当前 20 分钟内暂无澳洲灰狗赛事，请稍候。")
+                    
             else:
-                st.error("API 响应错误")
+                st.error(f"API 报错: {res.status_code}")
         except Exception as e:
-            st.error(f"分析引擎波动: {e}")
+            st.error(f"系统同步中... {e}")
 
-        time.sleep(60) # 每分钟扫描一次时间差
+        time.sleep(60)
         st.rerun()
-else:
-    st.warning("👋 Mark，请输入 Key 启动灰狗分析系统。")
